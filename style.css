@@ -1,0 +1,12 @@
+@reference "tailwindcss";
+@import "tailwindcss/utilities";
+
+#yt-shuffler-panel-container {
+    transition: opacity 0.25s cubic-bezier(0.25, 0.1, 0.25, 1);
+    font-family: "Roboto", "Arial", sans-serif;
+}
+
+#movie_player.ytp-autohide #yt-shuffler-panel-container:not([data-queue-open="true"]) {
+    opacity: 0;
+    pointer-events: none;
+}

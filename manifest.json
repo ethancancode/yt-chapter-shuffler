@@ -1,0 +1,25 @@
+{
+    "manifest_version": 3,
+    "name": "YouTube Intelligent Shuffler",
+    "version": "1.0",
+    "permissions": [
+        "tabs"
+    ],
+    "background": {
+        "service_worker": "src/background.ts",
+        "type": "module"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://www.youtube.com/*"
+            ],
+            "css": [
+                "style.css"
+            ],
+            "js": [
+                "src/content.tsx"
+            ]
+        }
+    ]
+}
