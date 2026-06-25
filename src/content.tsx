@@ -67,8 +67,9 @@ function scrapeChapters(): Chapter[] {
     if (scrapedChapters.length === 0) { // search chapters in description
         const timeLinks = document.querySelectorAll('a[href*="t="], a[href*="&t="]');
         timeLinks.forEach(link => {
-            const isInsideMetadata = link.closest('#description-inline-expander, #structured-description, ytd-expandable-video-description-body-renderer, ytd-engagement-panel-section-list-renderer');
-            if (!isInsideMetadata) return;
+            const isInsideMetadata = link.closest('#description-inline-expander, #structured-description, ytd-expandable-video-description-body-renderer');
+            const isInsideAutoComponent = link.closest('ytd-macro-markers-list-item-renderer, ytd-horizontal-card-list-renderer, ytd-video-description-infocards-section-renderer, #infocards-section');
+            if (!isInsideMetadata || isInsideAutoComponent) return; // ignore auto generated components
 
             const href = link.getAttribute('href');
             const match = href?.match(/[?&]t=(\d+)/);
@@ -76,13 +77,18 @@ function scrapeChapters(): Chapter[] {
             if (match) {
                 const timeInSeconds = parseInt(match[1], 10);
                 let title = "";
-                if (link.nextSibling && link.nextSibling.textContent) {
-                    title = link.nextSibling.textContent.replace(/^[\s\-:|>=]+/, '').trim();
-                }
 
-                if (!title) {
-                    const parentLine = link.closest('span, div')?.textContent || "";
-                    title = parentLine.replace(link.textContent || "", "").replace(/^[\s\-:|>=]+/, '').trim();
+                let container = link.parentElement;
+                while (container && container.textContent?.trim() === link.textContent?.trim() && container.tagName !== 'BODY') {
+                    container = container.parentElement;
+                }
+                
+                if (container && container.textContent) {
+                    const lines = container.textContent.split('\n');
+                    const targetLine = lines.find(l => l.includes(link.textContent || ""));
+                    if (targetLine) {
+                        title = targetLine.replace(link.textContent || "", "").replace(/^[\s\-:|>=]+/, '').trim();
+                    }
                 }
 
                 if (title.toLowerCase().includes("view") || title.toLowerCase().includes("subscribe") || title.length > 100) {
@@ -138,12 +144,31 @@ function scrapeChapters(): Chapter[] {
     return scrapedChapters;
 }
 
+let isNavigating = false;
+
+document.addEventListener('yt-navigate-start', () => {
+    isNavigating = true;
+    currentLoadedVideoId = null;
+    useShufflerStore.getState().resetStore();
+});
+
+document.addEventListener('yt-navigate-finish', () => {
+    isNavigating = false;
+});
+
 function monitorTrackBoundaries() {
+    if (isNavigating) return;
+
     const video = document.querySelector('video');
     const store = useShufflerStore.getState();
     const activeVideoId = getCurrentVideoId();
 
     if (!activeVideoId) return;
+
+    const watchFlexy = document.querySelector('ytd-watch-flexy');
+    const domVideoId = watchFlexy?.getAttribute('video-id');
+    
+    if (domVideoId && domVideoId !== activeVideoId) return; // wait for dom to catch up to url change
 
     const scraped = scrapeChapters();
 
