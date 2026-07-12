@@ -3,8 +3,12 @@
     "name": "YouTube Intelligent Shuffler",
     "version": "1.0",
     "permissions": [
-        "tabs"
+        "tabs",
+        "storage"
     ],
+    "action": {
+        "default_popup": "popup.html"
+    },
     "background": {
         "service_worker": "src/background.ts",
         "type": "module"
