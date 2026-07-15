@@ -201,7 +201,7 @@ function monitorTrackBoundaries() {
             if (currentTime < activePlayingChapter.time - 2 || currentTime > activeChapterEnd) {
                 const targetChapter = [...store.masterChaptersList].reverse().find(c => c.time <= currentTime);
                 if (targetChapter) {
-                    (store as any).moveChapterBelowActive(targetChapter.time);
+                    store.moveChapterBelowActive(targetChapter.time);
                     return;
                 }
             }
@@ -225,11 +225,61 @@ function monitorTrackBoundaries() {
         const idx = store.masterChaptersList.findIndex(c => c.time === currentChapter.time);
         const currentChapterEnd = store.masterChaptersList[idx + 1]?.time || video.duration;
 
-        if (currentChapterEnd - currentTime <= 1.0) {
-            if (store.stateLoopActive) {
-                video.currentTime = currentChapter.time;
-            } else if (store.isShuffleActive) {
-                store.executeTrackJump();
+        const fadeThreshold = (store.isAudioFadeEnabled && store.fadeDuration > 1) ? store.fadeDuration : 1.0;
+        if (currentChapterEnd - currentTime <= fadeThreshold && !store.isFadingOut) {
+            if (store.stateLoopActive || store.isShuffleActive) {
+                if (store.isAudioFadeEnabled) {
+                    store.setIsFadingOut(true);
+                    const savedVolume = video.volume;
+                    store.setOriginalVolume(savedVolume);
+                    
+                    const remainingTime = currentChapterEnd - currentTime;
+                    const effectiveFade = Math.min(store.fadeDuration, remainingTime);
+                    const fadeDuration = effectiveFade * 1000; // convert seconds to ms
+                    const steps = 20;
+                    const stepTime = fadeDuration / steps;
+                    const volumeStep = savedVolume / steps;
+                    let currentVol = savedVolume;
+                    let currentStep = 0;
+
+                    const fadeOutInterval = setInterval(() => { // fade out current chapter
+                        currentStep++;
+                        currentVol = Math.max(0, currentVol - volumeStep);
+                        video.volume = currentVol;
+
+                        if (currentStep >= steps) {
+                            clearInterval(fadeOutInterval);
+                            
+                            if (store.stateLoopActive) { // jump to next chapter
+                                video.currentTime = currentChapter.time;
+                            } else {
+                                store.executeTrackJump();
+                            }
+
+                            let fadeInVol = 0; // fade in new chapter
+                            let fadeInStep = 0;
+                            video.volume = 0;
+
+                            const fadeInInterval = setInterval(() => {
+                                fadeInStep++;
+                                fadeInVol = Math.min(savedVolume, fadeInVol + volumeStep);
+                                video.volume = fadeInVol;
+
+                                if (fadeInStep >= steps) {
+                                    clearInterval(fadeInInterval);
+                                    video.volume = savedVolume;
+                                    store.setIsFadingOut(false);
+                                }
+                            }, stepTime);
+                        }
+                    }, stepTime);
+                } else {
+                    if (store.stateLoopActive) {
+                        video.currentTime = currentChapter.time;
+                    } else {
+                        store.executeTrackJump();
+                    }
+                }
             }
         }
     }
@@ -282,5 +332,25 @@ chrome.runtime.onMessage.addListener((request) => {
             existingUI.remove();
         }
         useShufflerStore.getState().resetStore();
+    }
+});
+
+chrome.storage.local.get(['isAudioFadeEnabled', 'fadeDuration'], (result) => {
+    if (result.isAudioFadeEnabled !== undefined) {
+        useShufflerStore.getState().setAudioFadeEnabled(result.isAudioFadeEnabled as boolean);
+    }
+    if (result.fadeDuration !== undefined) {
+        useShufflerStore.getState().setFadeDuration(result.fadeDuration as number);
+    }
+});
+
+chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local') {
+        if (changes.isAudioFadeEnabled) {
+            useShufflerStore.getState().setAudioFadeEnabled(changes.isAudioFadeEnabled.newValue as boolean);
+        }
+        if (changes.fadeDuration) {
+            useShufflerStore.getState().setFadeDuration(changes.fadeDuration.newValue as number);
+        }
     }
 });

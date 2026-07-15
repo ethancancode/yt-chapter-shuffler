@@ -17,12 +17,20 @@ interface ShufflerState {
     stateLoopActive: boolean;
     statePlaylistLoopActive: boolean;
     stateReshuffleOnLoopActive: boolean;
+    isAudioFadeEnabled: boolean;
+    isFadingOut: boolean;
+    originalVolume: number;
+    fadeDuration: number;
 
     setMasterChapters: (chapters: Chapter[]) => void;
     setQueueOpen: (isOpen: boolean) => void;
     setLoopActive: (active: boolean) => void;
     setPlaylistLoopActive: (active: boolean) => void;
     setReshuffleOnLoopActive: (active: boolean) => void;
+    setAudioFadeEnabled: (active: boolean) => void;
+    setIsFadingOut: (fading: boolean) => void;
+    setOriginalVolume: (vol: number) => void;
+    setFadeDuration: (duration: number) => void;
     setDraggingPlaybackArrow: (isDragging: boolean) => void;
     setDraggedItemIndex: (idx: number | null) => void;
     toggleTrackExclusion: (time: number) => void;
@@ -31,6 +39,7 @@ interface ShufflerState {
     executeTrackJump: () => void;
     handleNativeTimelineSkip: (actualQueueIndex: number, expectedIndex: number) => void;
     handleManualReorder: (draggedIdx: number, targetIdx: number) => void;
+    moveChapterBelowActive: (targetChapterTime: number) => void;
     resetStore: () => void;
 }
 
@@ -47,14 +56,21 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     stateLoopActive: false,
     statePlaylistLoopActive: false,
     stateReshuffleOnLoopActive: false,
+    isAudioFadeEnabled: false,
+    isFadingOut: false,
+    originalVolume: 1,
+    fadeDuration: 1,
 
     setMasterChapters: (chapters) => set({ masterChaptersList: chapters }),
     setQueueOpen: (isOpen) => set({ isQueueListOpen: isOpen }),
 
     setLoopActive: (active) => set({ stateLoopActive: active }),
     setPlaylistLoopActive: (active) => set({ statePlaylistLoopActive: active }),
-
     setReshuffleOnLoopActive: (active) => set({ stateReshuffleOnLoopActive: active }),
+    setAudioFadeEnabled: (active) => set({ isAudioFadeEnabled: active }),
+    setIsFadingOut: (fading) => set({ isFadingOut: fading }),
+    setOriginalVolume: (vol) => set({ originalVolume: vol }),
+    setFadeDuration: (duration) => set({ fadeDuration: duration }),
     setDraggingPlaybackArrow: (isDragging) => set({ isDraggingPlaybackArrow: isDragging }),
     setDraggedItemIndex: (idx) => set({ draggedItemIndex: idx }),
 
@@ -137,7 +153,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         const videoId = urlParams.get('v');
         if (!videoId) return;
 
-        const detailElement = document.querySelector('ytd-watch-flexy') as any;
+        const detailElement = document.querySelector('ytd-watch-flexy') as (HTMLElement & { emit?: (event: string, detail: unknown) => void }) | null;
         if (detailElement && detailElement.emit) {
             detailElement.emit('yt-navigate', {
                 endpoint: { watchEndpoint: { videoId: videoId, startTimeSeconds: targetChapter.time } }
