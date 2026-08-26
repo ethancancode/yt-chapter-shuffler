@@ -5,6 +5,11 @@ export interface Chapter {
     title: string;
 }
 
+export interface SavedPreset {
+    name: string;
+    queue: Chapter[];
+}
+
 interface ShufflerState {
     masterChaptersList: Chapter[];
     shuffledQueue: Chapter[];
@@ -21,6 +26,7 @@ interface ShufflerState {
     isFadingOut: boolean;
     originalVolume: number;
     fadeDuration: number;
+    savedPresets: SavedPreset[];
 
     setMasterChapters: (chapters: Chapter[]) => void;
     setQueueOpen: (isOpen: boolean) => void;
@@ -35,6 +41,8 @@ interface ShufflerState {
     setDraggedItemIndex: (idx: number | null) => void;
     toggleTrackExclusion: (time: number) => void;
     generateSmartQueue: () => void;
+    loadPresetQueue: (queue: Chapter[]) => void;
+    setSavedPresets: (presets: SavedPreset[]) => void;
     jumpToQueueIndex: (index: number) => void;
     executeTrackJump: () => void;
     handleNativeTimelineSkip: (actualQueueIndex: number, expectedIndex: number) => void;
@@ -60,6 +68,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     isFadingOut: false,
     originalVolume: 1,
     fadeDuration: 1,
+    savedPresets: [],
 
     setMasterChapters: (chapters) => set({ masterChaptersList: chapters }),
     setQueueOpen: (isOpen) => set({ isQueueListOpen: isOpen }),
@@ -101,6 +110,13 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         get().executeTrackJump();
     },
 
+    loadPresetQueue: (queue) => { // load a saved preset and start from the first track
+        set({ shuffledQueue: [...queue], currentQueueIndex: 0, isShuffleActive: true });
+        get().executeTrackJump();
+    },
+
+    setSavedPresets: (presets) => set({ savedPresets: presets }),
+
     jumpToQueueIndex: (index) => {
         const { shuffledQueue } = get();
         if (index < 0 || index >= shuffledQueue.length) return;
@@ -134,6 +150,8 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
                 }
             } else {
                 set({ isShuffleActive: false });
+                const video = document.querySelector('video'); // pause when queue is done
+                if (video) video.pause();
                 return;
             }
         }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { useShufflerStore, Chapter } from './shufflerStore';
+import { useShufflerStore, Chapter, SavedPreset } from './shufflerStore';
 import { ShufflerPills } from './components/ShufflerPills';
 import { QueueWindow } from './components/QueueWindow';
 
@@ -43,7 +43,10 @@ function scrapeChapters(): Chapter[] {
     const scrapedChapters: Chapter[] = [];
     const seenTimes = new Set<number>();
 
-    const chaptersPanel = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"]'); // check engagement panel list
+    const watchFlexy = document.querySelector('ytd-watch-flexy');
+    if (!watchFlexy) return [];
+
+    const chaptersPanel = watchFlexy.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"]'); // check engagement panel list
     if (chaptersPanel) {
         const uiChapters = chaptersPanel.querySelectorAll('ytd-macro-markers-list-item-renderer');
         uiChapters.forEach(item => {
@@ -65,7 +68,7 @@ function scrapeChapters(): Chapter[] {
     }
 
     if (scrapedChapters.length === 0) { // search chapters in description
-        const timeLinks = document.querySelectorAll('a[href*="t="], a[href*="&t="]');
+        const timeLinks = watchFlexy.querySelectorAll('a[href*="t="], a[href*="&t="]');
         timeLinks.forEach(link => {
             const isInsideMetadata = link.closest('#description-inline-expander, #structured-description, ytd-expandable-video-description-body-renderer');
             const isInsideAutoComponent = link.closest('ytd-macro-markers-list-item-renderer, ytd-horizontal-card-list-renderer, ytd-video-description-infocards-section-renderer, #infocards-section');
@@ -110,7 +113,7 @@ function scrapeChapters(): Chapter[] {
     if (scrapedChapters.length > 0 && !seenTimes.has(0)) { // add a 0:00 chapter if missing
         let zeroTitle = "";
 
-        const firstMarker = document.querySelector( // check first marker from panel
+        const firstMarker = watchFlexy.querySelector( // check first marker from panel
             'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] ytd-macro-markers-list-item-renderer:first-child'
         );
         if (firstMarker) {
@@ -121,9 +124,9 @@ function scrapeChapters(): Chapter[] {
         }
 
         if (!zeroTitle) { // check chapter name shown under the player
-            const chapterTitle = document.querySelector('.ytp-chapter-title-content');
+            const chapterTitle = watchFlexy.querySelector('.ytp-chapter-title-content') || document.querySelector('.ytp-chapter-title-content');
             if (chapterTitle && (chapterTitle as HTMLElement).innerText.trim()) {
-                const video = document.querySelector('video');
+                const video = watchFlexy.querySelector('video') || document.querySelector('video');
                 if (video && video.currentTime < 5) {
                     zeroTitle = (chapterTitle as HTMLElement).innerText.trim();
                 }
@@ -180,6 +183,11 @@ function monitorTrackBoundaries() {
 
         if (currentSignature !== masterSignature) {
             store.setMasterChapters(scraped);
+            // load saved presets for this video from chrome storage
+            chrome.storage.local.get([`presets_${activeVideoId}`], (result) => {
+                const presets = (result[`presets_${activeVideoId}`] as SavedPreset[]) ?? [];
+                useShufflerStore.getState().setSavedPresets(presets);
+            });
         }
     } else {
         if (currentLoadedVideoId !== activeVideoId && store.masterChaptersList.length > 0) {
@@ -321,7 +329,7 @@ layoutObserver.observe(document.body, { childList: true, subtree: true });
 
 const shufflerIntervalID = setInterval(monitorTrackBoundaries, 500);
 
-chrome.runtime.onMessage.addListener((request) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.action === "NEW_VIDEO_LOADED") {
         const existingUI = document.getElementById('yt-shuffler-panel-container');
         if (existingUI) {
@@ -332,6 +340,11 @@ chrome.runtime.onMessage.addListener((request) => {
             existingUI.remove();
         }
         useShufflerStore.getState().resetStore();
+    }
+
+    if (request.action === "GET_CURRENT_QUEUE") { // popup asking for the active shuffled queue
+        const { shuffledQueue } = useShufflerStore.getState();
+        sendResponse({ queue: shuffledQueue });
     }
 });
 
@@ -351,6 +364,10 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
         }
         if (changes.fadeDuration) {
             useShufflerStore.getState().setFadeDuration(changes.fadeDuration.newValue as number);
+        }
+        const activeVideoId = getCurrentVideoId();
+        if (activeVideoId && changes[`presets_${activeVideoId}`]) {
+            useShufflerStore.getState().setSavedPresets((changes[`presets_${activeVideoId}`].newValue as SavedPreset[]) ?? []);
         }
     }
 });
