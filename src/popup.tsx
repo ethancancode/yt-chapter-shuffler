@@ -195,6 +195,29 @@ function PopupApp() {
                 )}
             </div>
 
+            {/* custom chapters section */}
+            {videoId && (
+                <div className="flex items-center justify-between pt-3 border-t border-[#3f3f3f]">
+                    <div className="flex flex-col">
+                        <span className="text-sm font-medium text-white">Custom Chapters</span>
+                        <span className="text-xs text-[#aaaaaa]">Paste from comments or add manually</span>
+                    </div>
+                    <button
+                        className="text-[11px] px-3 py-1 rounded-full bg-[#2a2a2a] hover:bg-[#383838] text-white font-medium cursor-pointer border border-[rgba(255,255,255,0.1)] transition-colors"
+                        onClick={() => {
+                            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                                if (tabs[0]?.id) {
+                                    chrome.tabs.sendMessage(tabs[0].id, { action: 'OPEN_CUSTOM_CHAPTERS' });
+                                    window.close();
+                                }
+                            });
+                        }}
+                    >
+                        Manage
+                    </button>
+                </div>
+            )}
+
             {/* save playlist — only shows when on a youtube video tab */}
             {videoId && (
                 <div className="flex flex-col gap-2 pt-3 border-t border-[#3f3f3f]">

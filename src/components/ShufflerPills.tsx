@@ -4,11 +4,17 @@ import { useShufflerStore } from '../shufflerStore';
 export const ShufflerPills: React.FC = () => {
     const isShuffleActive = useShufflerStore((state) => state.isShuffleActive); // get state from store
     const isQueueOpen = useShufflerStore((state) => state.isQueueListOpen);
+    const masterChaptersList = useShufflerStore((state) => state.masterChaptersList);
+    const setCustomModalOpen = useShufflerStore((state) => state.setCustomModalOpen);
 
     const generateSmartQueue = useShufflerStore((state) => state.generateSmartQueue);
     const setQueueOpen = useShufflerStore((state) => state.setQueueOpen);
 
     const btnClass = "inline-flex items-center justify-center bg-[rgba(15,15,15,0.85)] text-[#f1f1f1] border border-[rgba(255,255,255,0.1)] py-1.5 px-3.5 rounded-[18px] font-medium text-[13px] cursor-pointer outline-none normal-case select-none whitespace-nowrap shadow-[0_2px_8px_rgba(0,0,0,0.5)] backdrop-blur-[8px] transition-all duration-200 hover:bg-[rgba(40,40,40,0.9)] hover:border-[rgba(255,255,255,0.2)] active:scale-96 active:bg-[rgba(30,30,30,0.9)]";
+
+    if (masterChaptersList.length < 2) {
+        return null;
+    }
 
     return (
         <div className="flex items-center gap-2 mb-1 no-wrap">

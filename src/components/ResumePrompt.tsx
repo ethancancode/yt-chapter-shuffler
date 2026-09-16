@@ -20,7 +20,7 @@ export const ResumePrompt: React.FC = () => {
     if (!pendingResumeQueue) return null;
 
     const handleResume = () => {
-        restoreSavedSessionQueue(pendingResumeQueue.queue, pendingResumeQueue.currentIndex);
+        restoreSavedSessionQueue(pendingResumeQueue.queue, pendingResumeQueue.currentIndex, pendingResumeQueue.currentTime);
         setPendingResumeQueue(null);
     };
 

@@ -5,31 +5,31 @@ import { useShufflerStore, Chapter, SavedPreset } from './shufflerStore';
 import { ShufflerPills } from './components/ShufflerPills';
 import { QueueWindow } from './components/QueueWindow';
 import { ResumePrompt } from './components/ResumePrompt';
+import { CustomChaptersModal } from './components/CustomChaptersModal';
+import { CustomChapterCuts } from './components/CustomChapterCuts';
 
 const ShufflerApp: React.FC = () => {
-    const masterChaptersList = useShufflerStore((state) => state.masterChaptersList);
     const isQueueOpen = useShufflerStore((state) => state.isQueueListOpen);
+    const isCustomModalOpen = useShufflerStore((state) => state.isCustomModalOpen);
     const pendingResumeQueue = useShufflerStore((state) => state.pendingResumeQueue);
 
     React.useEffect(() => {
         const container = document.getElementById('yt-shuffler-panel-container');
         if (container) {
-            if (isQueueOpen) {
+            if (isQueueOpen || isCustomModalOpen) {
                 container.setAttribute('data-queue-open', 'true');
             } else {
                 container.removeAttribute('data-queue-open');
             }
         }
-    }, [isQueueOpen]);
-
-    if (!masterChaptersList || masterChaptersList.length === 0) {
-        return null;
-    }
+    }, [isQueueOpen, isCustomModalOpen]);
 
     return (
         <div id="yt-shuffler-extension-root" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {pendingResumeQueue ? <ResumePrompt /> : <ShufflerPills />}
             {isQueueOpen && <QueueWindow />}
+            <CustomChaptersModal />
+            <CustomChapterCuts />
         </div>
     );
 };
@@ -198,6 +198,17 @@ document.addEventListener('yt-navigate-start', () => {
     currentLoadedVideoId = null;
     autoShuffleHandledForVideo = null;
     useShufflerStore.getState().resetStore();
+
+    const chaptersContainer = document.querySelector('.ytp-chapters-container');
+    if (chaptersContainer && chaptersContainer.getAttribute('data-custom-shuffler') === 'true') {
+        chaptersContainer.removeAttribute('data-custom-shuffler');
+        chaptersContainer.removeAttribute('data-sig');
+    }
+    const titleElem = document.querySelector('.ytp-tooltip-progress-bar-pill-title');
+    if (titleElem) {
+        titleElem.remove();
+    }
+
     const existingUI = document.getElementById('yt-shuffler-panel-container');
     if (existingUI) {
         if (reactRoot) {
@@ -225,6 +236,20 @@ document.addEventListener('play', (e) => {
     }
 }, true);
 
+window.addEventListener('beforeunload', () => {
+    const activeVideoId = getCurrentVideoId();
+    const store = useShufflerStore.getState();
+    const video = document.querySelector('video');
+    if (activeVideoId && store.isShuffleActive && store.shuffledQueue.length > 0 && video) {
+        const currentIndex = Math.max(0, store.currentQueueIndex - 1);
+        sessionStorage.setItem(`active_queue_${activeVideoId}`, JSON.stringify({
+            queue: store.shuffledQueue,
+            currentIndex,
+            currentTime: video.currentTime
+        }));
+    }
+});
+
 function monitorTrackBoundaries() {
     if (isNavigating) return;
 
@@ -241,24 +266,40 @@ function monitorTrackBoundaries() {
 
     const scraped = scrapeChapters();
 
-    if (scraped.length > 0) {
+    let chaptersToUse = scraped;
+
+    // if no native chapters, check if user saved custom chapters for this video
+    if (chaptersToUse.length === 0) {
+        chrome.storage.local.get([`custom_chapters_${activeVideoId}`], (result) => {
+            const custom = (result[`custom_chapters_${activeVideoId}`] as Chapter[]) ?? [];
+            if (custom.length >= 2) {
+                const currentSig = custom.map(c => c.time).join(',');
+                const masterSig = useShufflerStore.getState().masterChaptersList.map(c => c.time).join(',');
+                if (currentSig !== masterSig) {
+                    useShufflerStore.getState().setMasterChapters(custom, true);
+                }
+            }
+        });
+    }
+
+    if (chaptersToUse.length > 0) {
         currentLoadedVideoId = activeVideoId;
 
-        const currentSignature = scraped.map(c => c.time).join(',');
+        const currentSignature = chaptersToUse.map(c => c.time).join(',');
         const masterSignature = store.masterChaptersList.map(c => c.time).join(',');
 
         if (currentSignature !== masterSignature) {
-            store.setMasterChapters(scraped);
+            store.setMasterChapters(chaptersToUse, false);
             // load saved presets for this video from chrome storage
             chrome.storage.local.get([`presets_${activeVideoId}`], (result) => {
                 const presets = (result[`presets_${activeVideoId}`] as SavedPreset[]) ?? [];
                 useShufflerStore.getState().setSavedPresets(presets);
             });
 
-            // check if there is an existing session queue from earlier for THIS video
+            // check if there is an existing session queue from earlier for this video
             const savedSession = sessionStorage.getItem(`active_queue_${activeVideoId}`);
             let hasSavedSession = false;
-            let parsedSession: { queue: Chapter[]; currentIndex: number } | null = null;
+            let parsedSession: { queue: Chapter[]; currentIndex: number; currentTime?: number } | null = null;
 
             if (savedSession) {
                 try {
@@ -270,36 +311,31 @@ function monitorTrackBoundaries() {
                 } catch (e) { }
             }
 
-            if (hasSavedSession && parsedSession) {
+            if (hasSavedSession && parsedSession && store.isKeepPlaylistOnRefreshEnabled) {
                 if (isSpaNavigation) {
-                    // Coming back to this video from another video: ask user via sleek prompt
+                    // coming back to this video from another video: ask user via sleek prompt
                     useShufflerStore.getState().setPendingResumeQueue(parsedSession);
                     autoShuffleHandledForVideo = activeVideoId;
-                } else if (store.isKeepPlaylistOnRefreshEnabled) {
-                    // Simple page reload (F5): keep the existing playlist directly
-                    useShufflerStore.getState().restoreSavedSessionQueue(parsedSession.queue, parsedSession.currentIndex ?? 0);
+                } else {
+                    // simple page reload (f5): keep the existing playlist directly and resume from saved timestamp
+                    useShufflerStore.getState().restoreSavedSessionQueue(parsedSession.queue, parsedSession.currentIndex ?? 0, parsedSession.currentTime);
                     autoShuffleHandledForVideo = activeVideoId;
                 }
             } else if (store.isAutoShuffleEnabled && !store.isShuffleActive && detectIsMusicVideo()) {
-                // No saved queue: trigger standard smart shuffle
+                // fresh shuffle on load/refresh when keep playlist on refresh is disabled
+                if (!store.isKeepPlaylistOnRefreshEnabled) {
+                    sessionStorage.removeItem(`active_queue_${activeVideoId}`);
+                }
                 autoShuffleHandledForVideo = activeVideoId;
                 useShufflerStore.getState().generateSmartQueue();
             }
         }
     } else {
-        if (store.masterChaptersList.length > 0 || store.isShuffleActive) {
-            currentLoadedVideoId = activeVideoId;
+        currentLoadedVideoId = activeVideoId;
+        if (store.isShuffleActive || store.masterChaptersList.length > 0) {
             store.resetStore();
-            const existingUI = document.getElementById('yt-shuffler-panel-container');
-            if (existingUI) {
-                if (reactRoot) {
-                    reactRoot.unmount();
-                    reactRoot = null;
-                }
-                existingUI.remove();
-            }
-            return;
         }
+        return;
     }
 
     if (!video || store.masterChaptersList.length === 0) return;
@@ -322,6 +358,15 @@ function monitorTrackBoundaries() {
     }
 
     if (video.paused) return;
+
+    if (store.isShuffleActive && store.shuffledQueue.length > 0 && activeVideoId) {
+        const currentIdx = Math.max(0, store.currentQueueIndex - 1);
+        sessionStorage.setItem(`active_queue_${activeVideoId}`, JSON.stringify({
+            queue: store.shuffledQueue,
+            currentIndex: currentIdx,
+            currentTime: currentTime
+        }));
+    }
 
     const currentChapter = [...store.masterChaptersList].reverse().find(c => c.time <= currentTime);
 
@@ -388,7 +433,7 @@ function monitorTrackBoundaries() {
 function injectReactUI() {
     if (document.getElementById('yt-shuffler-panel-container')) return;
 
-    const targetContainer = document.querySelector('#movie_player');
+    const targetContainer = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
     if (!targetContainer) return;
 
     const wrapperBlock = document.createElement('div');
@@ -412,8 +457,7 @@ function injectReactUI() {
 }
 
 const layoutObserver = new MutationObserver(() => {
-    const targetSpace = document.querySelector('#secondary-inner') || document.querySelector('#columns ytd-watch-flexy');
-    if (targetSpace) {
+    if (window.location.pathname.includes('/watch')) {
         injectReactUI();
     }
     const store = useShufflerStore.getState();
@@ -442,6 +486,11 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.action === "GET_CURRENT_QUEUE") { // popup asking for the active shuffled queue
         const { shuffledQueue } = useShufflerStore.getState();
         sendResponse({ queue: shuffledQueue });
+    }
+
+    if (request.action === "OPEN_CUSTOM_CHAPTERS") {
+        useShufflerStore.getState().setCustomModalOpen(true);
+        sendResponse({ success: true });
     }
 });
 

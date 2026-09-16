@@ -29,10 +29,13 @@ interface ShufflerState {
     savedPresets: SavedPreset[];
     isAutoShuffleEnabled: boolean;
     isKeepPlaylistOnRefreshEnabled: boolean;
-    pendingResumeQueue: { queue: Chapter[]; currentIndex: number } | null;
+    pendingResumeQueue: { queue: Chapter[]; currentIndex: number; currentTime?: number } | null;
+    isCustomModalOpen: boolean;
+    isCustomChapters: boolean;
 
-    setMasterChapters: (chapters: Chapter[]) => void;
+    setMasterChapters: (chapters: Chapter[], isCustom?: boolean) => void;
     setQueueOpen: (isOpen: boolean) => void;
+    setCustomModalOpen: (isOpen: boolean) => void;
     setLoopActive: (active: boolean) => void;
     setPlaylistLoopActive: (active: boolean) => void;
     setReshuffleOnLoopActive: (active: boolean) => void;
@@ -54,8 +57,8 @@ interface ShufflerState {
     resetStore: () => void;
     setAutoShuffleEnabled: (enabled: boolean) => void;
     setKeepPlaylistOnRefreshEnabled: (enabled: boolean) => void;
-    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => void;
-    setPendingResumeQueue: (pending: { queue: Chapter[]; currentIndex: number } | null) => void;
+    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number, savedTime?: number) => void;
+    setPendingResumeQueue: (pending: { queue: Chapter[]; currentIndex: number; currentTime?: number } | null) => void;
 }
 
 export const useShufflerStore = create<ShufflerState>((set, get) => ({
@@ -68,6 +71,8 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     draggedItemIndex: null,
     isDraggingPlaybackArrow: false,
     pendingResumeQueue: null,
+    isCustomModalOpen: false,
+    isCustomChapters: false,
 
     stateLoopActive: false,
     statePlaylistLoopActive: false,
@@ -81,8 +86,9 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     isKeepPlaylistOnRefreshEnabled: true,
 
     setPendingResumeQueue: (pending) => set({ pendingResumeQueue: pending }),
-    setMasterChapters: (chapters) => set({ masterChaptersList: chapters }),
+    setMasterChapters: (chapters, isCustom = false) => set({ masterChaptersList: chapters, isCustomChapters: isCustom }),
     setQueueOpen: (isOpen) => set({ isQueueListOpen: isOpen }),
+    setCustomModalOpen: (isOpen) => set({ isCustomModalOpen: isOpen }),
     setLoopActive: (active) => set({ stateLoopActive: active }),
     setPlaylistLoopActive: (active) => set({ statePlaylistLoopActive: active }),
     setAutoShuffleEnabled: (enabled) => set({ isAutoShuffleEnabled: enabled }),
@@ -122,7 +128,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         const urlParams = new URLSearchParams(window.location.search);
         const vid = urlParams.get('v');
         if (vid) {
-            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue, currentIndex: 0 }));
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue, currentIndex: 0, currentTime: queue[0]?.time ?? 0 }));
         }
         get().executeTrackJump();
     },
@@ -132,7 +138,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         const urlParams = new URLSearchParams(window.location.search);
         const vid = urlParams.get('v');
         if (vid) {
-            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue, currentIndex: 0 }));
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue, currentIndex: 0, currentTime: queue[0]?.time ?? 0 }));
         }
         get().executeTrackJump();
     },
@@ -146,7 +152,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         const urlParams = new URLSearchParams(window.location.search);
         const vid = urlParams.get('v');
         if (vid) {
-            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue: shuffledQueue, currentIndex: index }));
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue: shuffledQueue, currentIndex: index, currentTime: shuffledQueue[index]?.time ?? 0 }));
         }
         get().executeTrackJump();
     },
@@ -186,23 +192,18 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         const targetChapter = shuffledQueue[nextIndex];
         set({ currentQueueIndex: nextIndex + 1 });
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const vid = urlParams.get('v');
+        if (vid) {
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue: shuffledQueue, currentIndex: nextIndex, currentTime: targetChapter.time }));
+        }
+
         const video = document.querySelector('video');
         if (video) {
             video.currentTime = targetChapter.time;
             if (video.paused) {
                 video.play().catch(() => { });
             }
-        }
-
-        const urlParams = new URLSearchParams(window.location.search);
-        const videoId = urlParams.get('v');
-        if (!videoId) return;
-
-        const detailElement = document.querySelector('ytd-watch-flexy') as (HTMLElement & { emit?: (event: string, detail: unknown) => void }) | null;
-        if (detailElement && detailElement.emit) {
-            detailElement.emit('yt-navigate', {
-                endpoint: { watchEndpoint: { videoId: videoId, startTimeSeconds: targetChapter.time } }
-            });
         }
     },
 
@@ -281,10 +282,12 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         currentQueueIndex: -1,
         isShuffleActive: false,
         isQueueListOpen: false,
-        pendingResumeQueue: null
+        pendingResumeQueue: null,
+        isCustomModalOpen: false,
+        isCustomChapters: false
     }),
 
-    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => {
+    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number, savedTime?: number) => {
         const targetIdx = Math.max(0, Math.min(currentIndex, queue.length - 1));
         set({
             shuffledQueue: [...queue],
@@ -295,7 +298,23 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         if (targetChapter) {
             const video = document.querySelector('video');
             if (video) {
-                video.currentTime = targetChapter.time;
+                const applyTime = () => {
+                    const resumeTime = (typeof savedTime === 'number' && !isNaN(savedTime) && savedTime >= targetChapter.time)
+                        ? savedTime
+                        : targetChapter.time;
+                    try {
+                        video.currentTime = resumeTime;
+                    } catch (e) { }
+                    if (video.paused) {
+                        video.play().catch(() => { });
+                    }
+                };
+
+                if (video.readyState >= 1) {
+                    applyTime();
+                } else {
+                    video.addEventListener('loadedmetadata', applyTime, { once: true });
+                }
             }
         }
     }
