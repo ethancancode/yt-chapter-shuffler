@@ -4,10 +4,12 @@ import '../style.css';
 import { useShufflerStore, Chapter, SavedPreset } from './shufflerStore';
 import { ShufflerPills } from './components/ShufflerPills';
 import { QueueWindow } from './components/QueueWindow';
+import { ResumePrompt } from './components/ResumePrompt';
 
 const ShufflerApp: React.FC = () => {
     const masterChaptersList = useShufflerStore((state) => state.masterChaptersList);
     const isQueueOpen = useShufflerStore((state) => state.isQueueListOpen);
+    const pendingResumeQueue = useShufflerStore((state) => state.pendingResumeQueue);
 
     React.useEffect(() => {
         const container = document.getElementById('yt-shuffler-panel-container');
@@ -26,7 +28,7 @@ const ShufflerApp: React.FC = () => {
 
     return (
         <div id="yt-shuffler-extension-root" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <ShufflerPills />
+            {pendingResumeQueue ? <ResumePrompt /> : <ShufflerPills />}
             {isQueueOpen && <QueueWindow />}
         </div>
     );
@@ -43,9 +45,16 @@ function getCurrentVideoId(): string | null {
 function scrapeChapters(): Chapter[] {
     const scrapedChapters: Chapter[] = [];
     const seenTimes = new Set<number>();
+    const activeVideoId = getCurrentVideoId();
 
     const watchFlexy = document.querySelector('ytd-watch-flexy');
     if (!watchFlexy) return [];
+
+    // Ensure the DOM element matches the active video ID to prevent scraping previous video during SPA navigation
+    const domVideoId = watchFlexy.getAttribute('video-id');
+    if (activeVideoId && domVideoId && domVideoId !== activeVideoId) {
+        return [];
+    }
 
     const chaptersPanel = watchFlexy.querySelector('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"]'); // check engagement panel list
     if (chaptersPanel) {
@@ -86,12 +95,17 @@ function scrapeChapters(): Chapter[] {
                 while (container && container.textContent?.trim() === link.textContent?.trim() && container.tagName !== 'BODY') {
                     container = container.parentElement;
                 }
-                
+
                 if (container && container.textContent) {
                     const lines = container.textContent.split('\n');
                     const targetLine = lines.find(l => l.includes(link.textContent || ""));
                     if (targetLine) {
-                        title = targetLine.replace(link.textContent || "", "").replace(/^[\s\-:|>=]+/, '').trim();
+                        // Strip all timestamp patterns (like 0:00, 5:18, 00:00:00), dashes, colons from the title
+                        title = targetLine
+                            .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, '')
+                            .replace(/^[\s\-:|>=~.]+/, '')
+                            .replace(/[\s\-:|>=~.]+$/, '')
+                            .trim();
                     }
                 }
 
@@ -145,6 +159,12 @@ function scrapeChapters(): Chapter[] {
     }
 
     scrapedChapters.sort((a, b) => a.time - b.time);
+
+    // a video needs at least 2 chapters to be a shuffleable playlist/album
+    if (scrapedChapters.length < 2) {
+        return [];
+    }
+
     return scrapedChapters;
 }
 
@@ -169,13 +189,23 @@ function detectIsMusicVideo(): boolean {
 }
 
 let isNavigating = false;
+let isSpaNavigation = false;
 let autoShuffleHandledForVideo: string | null = null;
 
 document.addEventListener('yt-navigate-start', () => {
     isNavigating = true;
+    isSpaNavigation = true;
     currentLoadedVideoId = null;
     autoShuffleHandledForVideo = null;
     useShufflerStore.getState().resetStore();
+    const existingUI = document.getElementById('yt-shuffler-panel-container');
+    if (existingUI) {
+        if (reactRoot) {
+            reactRoot.unmount();
+            reactRoot = null;
+        }
+        existingUI.remove();
+    }
 });
 
 document.addEventListener('yt-navigate-finish', () => {
@@ -206,7 +236,7 @@ function monitorTrackBoundaries() {
 
     const watchFlexy = document.querySelector('ytd-watch-flexy');
     const domVideoId = watchFlexy?.getAttribute('video-id');
-    
+
     if (domVideoId && domVideoId !== activeVideoId) return; // wait for dom to catch up to url change
 
     const scraped = scrapeChapters();
@@ -225,32 +255,49 @@ function monitorTrackBoundaries() {
                 useShufflerStore.getState().setSavedPresets(presets);
             });
 
-            // check if there is an existing session queue to keep on refresh
-            let restored = false;
-            if (store.isKeepPlaylistOnRefreshEnabled) {
-                const savedSession = sessionStorage.getItem(`active_queue_${activeVideoId}`);
-                if (savedSession) {
-                    try {
-                        const parsed = JSON.parse(savedSession);
-                        if (parsed?.queue && parsed.queue.length > 0) {
-                            useShufflerStore.getState().restoreSavedSessionQueue(parsed.queue, parsed.currentIndex ?? 0);
-                            autoShuffleHandledForVideo = activeVideoId;
-                            restored = true;
-                        }
-                    } catch (e) { }
-                }
+            // check if there is an existing session queue from earlier for THIS video
+            const savedSession = sessionStorage.getItem(`active_queue_${activeVideoId}`);
+            let hasSavedSession = false;
+            let parsedSession: { queue: Chapter[]; currentIndex: number } | null = null;
+
+            if (savedSession) {
+                try {
+                    const parsed = JSON.parse(savedSession);
+                    if (parsed?.queue && parsed.queue.length > 0) {
+                        hasSavedSession = true;
+                        parsedSession = parsed;
+                    }
+                } catch (e) { }
             }
 
-            // trigger auto-shuffle if enabled for music videos and not already restored
-            if (!restored && store.isAutoShuffleEnabled && !store.isShuffleActive && detectIsMusicVideo()) {
+            if (hasSavedSession && parsedSession) {
+                if (isSpaNavigation) {
+                    // Coming back to this video from another video: ask user via sleek prompt
+                    useShufflerStore.getState().setPendingResumeQueue(parsedSession);
+                    autoShuffleHandledForVideo = activeVideoId;
+                } else if (store.isKeepPlaylistOnRefreshEnabled) {
+                    // Simple page reload (F5): keep the existing playlist directly
+                    useShufflerStore.getState().restoreSavedSessionQueue(parsedSession.queue, parsedSession.currentIndex ?? 0);
+                    autoShuffleHandledForVideo = activeVideoId;
+                }
+            } else if (store.isAutoShuffleEnabled && !store.isShuffleActive && detectIsMusicVideo()) {
+                // No saved queue: trigger standard smart shuffle
                 autoShuffleHandledForVideo = activeVideoId;
                 useShufflerStore.getState().generateSmartQueue();
             }
         }
     } else {
-        if (currentLoadedVideoId !== activeVideoId && store.masterChaptersList.length > 0) {
+        if (store.masterChaptersList.length > 0 || store.isShuffleActive) {
             currentLoadedVideoId = activeVideoId;
             store.resetStore();
+            const existingUI = document.getElementById('yt-shuffler-panel-container');
+            if (existingUI) {
+                if (reactRoot) {
+                    reactRoot.unmount();
+                    reactRoot = null;
+                }
+                existingUI.remove();
+            }
             return;
         }
     }
@@ -298,7 +345,7 @@ function monitorTrackBoundaries() {
                     store.setIsFadingOut(true);
                     const savedVolume = video.volume;
                     store.setOriginalVolume(savedVolume);
-                    
+
                     const remainingTime = currentChapterEnd - currentTime;
                     const effectiveFade = Math.min(store.fadeDuration, remainingTime);
                     const fadeDuration = effectiveFade * 1000; // convert seconds to ms

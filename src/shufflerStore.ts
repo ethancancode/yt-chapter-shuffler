@@ -29,6 +29,7 @@ interface ShufflerState {
     savedPresets: SavedPreset[];
     isAutoShuffleEnabled: boolean;
     isKeepPlaylistOnRefreshEnabled: boolean;
+    pendingResumeQueue: { queue: Chapter[]; currentIndex: number } | null;
 
     setMasterChapters: (chapters: Chapter[]) => void;
     setQueueOpen: (isOpen: boolean) => void;
@@ -54,6 +55,7 @@ interface ShufflerState {
     setAutoShuffleEnabled: (enabled: boolean) => void;
     setKeepPlaylistOnRefreshEnabled: (enabled: boolean) => void;
     restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => void;
+    setPendingResumeQueue: (pending: { queue: Chapter[]; currentIndex: number } | null) => void;
 }
 
 export const useShufflerStore = create<ShufflerState>((set, get) => ({
@@ -65,6 +67,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     isQueueListOpen: false,
     draggedItemIndex: null,
     isDraggingPlaybackArrow: false,
+    pendingResumeQueue: null,
 
     stateLoopActive: false,
     statePlaylistLoopActive: false,
@@ -77,6 +80,7 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     isAutoShuffleEnabled: false,
     isKeepPlaylistOnRefreshEnabled: true,
 
+    setPendingResumeQueue: (pending) => set({ pendingResumeQueue: pending }),
     setMasterChapters: (chapters) => set({ masterChaptersList: chapters }),
     setQueueOpen: (isOpen) => set({ isQueueListOpen: isOpen }),
     setLoopActive: (active) => set({ stateLoopActive: active }),
@@ -276,12 +280,23 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         excludedTimes: new Set<number>(),
         currentQueueIndex: -1,
         isShuffleActive: false,
-        isQueueListOpen: false
+        isQueueListOpen: false,
+        pendingResumeQueue: null
     }),
 
-    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => set({
-        shuffledQueue: [...queue],
-        currentQueueIndex: currentIndex,
-        isShuffleActive: true
-    })
+    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => {
+        const targetIdx = Math.max(0, Math.min(currentIndex, queue.length - 1));
+        set({
+            shuffledQueue: [...queue],
+            currentQueueIndex: targetIdx + 1,
+            isShuffleActive: true
+        });
+        const targetChapter = queue[targetIdx];
+        if (targetChapter) {
+            const video = document.querySelector('video');
+            if (video) {
+                video.currentTime = targetChapter.time;
+            }
+        }
+    }
 }));
