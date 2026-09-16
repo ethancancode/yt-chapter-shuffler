@@ -27,6 +27,8 @@ interface ShufflerState {
     originalVolume: number;
     fadeDuration: number;
     savedPresets: SavedPreset[];
+    isAutoShuffleEnabled: boolean;
+    isKeepPlaylistOnRefreshEnabled: boolean;
 
     setMasterChapters: (chapters: Chapter[]) => void;
     setQueueOpen: (isOpen: boolean) => void;
@@ -49,6 +51,9 @@ interface ShufflerState {
     handleManualReorder: (draggedIdx: number, targetIdx: number) => void;
     moveChapterBelowActive: (targetChapterTime: number) => void;
     resetStore: () => void;
+    setAutoShuffleEnabled: (enabled: boolean) => void;
+    setKeepPlaylistOnRefreshEnabled: (enabled: boolean) => void;
+    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => void;
 }
 
 export const useShufflerStore = create<ShufflerState>((set, get) => ({
@@ -69,12 +74,15 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
     originalVolume: 1,
     fadeDuration: 1,
     savedPresets: [],
+    isAutoShuffleEnabled: false,
+    isKeepPlaylistOnRefreshEnabled: true,
 
     setMasterChapters: (chapters) => set({ masterChaptersList: chapters }),
     setQueueOpen: (isOpen) => set({ isQueueListOpen: isOpen }),
-
     setLoopActive: (active) => set({ stateLoopActive: active }),
     setPlaylistLoopActive: (active) => set({ statePlaylistLoopActive: active }),
+    setAutoShuffleEnabled: (enabled) => set({ isAutoShuffleEnabled: enabled }),
+    setKeepPlaylistOnRefreshEnabled: (enabled) => set({ isKeepPlaylistOnRefreshEnabled: enabled }),
     setReshuffleOnLoopActive: (active) => set({ stateReshuffleOnLoopActive: active }),
     setAudioFadeEnabled: (active) => set({ isAudioFadeEnabled: active }),
     setIsFadingOut: (fading) => set({ isFadingOut: fading }),
@@ -107,11 +115,21 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         }
 
         set({ shuffledQueue: queue, currentQueueIndex: 0, isShuffleActive: true });
+        const urlParams = new URLSearchParams(window.location.search);
+        const vid = urlParams.get('v');
+        if (vid) {
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue, currentIndex: 0 }));
+        }
         get().executeTrackJump();
     },
 
     loadPresetQueue: (queue) => { // load a saved preset and start from the first track
         set({ shuffledQueue: [...queue], currentQueueIndex: 0, isShuffleActive: true });
+        const urlParams = new URLSearchParams(window.location.search);
+        const vid = urlParams.get('v');
+        if (vid) {
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue, currentIndex: 0 }));
+        }
         get().executeTrackJump();
     },
 
@@ -121,6 +139,11 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         const { shuffledQueue } = get();
         if (index < 0 || index >= shuffledQueue.length) return;
         set({ currentQueueIndex: index });
+        const urlParams = new URLSearchParams(window.location.search);
+        const vid = urlParams.get('v');
+        if (vid) {
+            sessionStorage.setItem(`active_queue_${vid}`, JSON.stringify({ queue: shuffledQueue, currentIndex: index }));
+        }
         get().executeTrackJump();
     },
 
@@ -254,5 +277,11 @@ export const useShufflerStore = create<ShufflerState>((set, get) => ({
         currentQueueIndex: -1,
         isShuffleActive: false,
         isQueueListOpen: false
+    }),
+
+    restoreSavedSessionQueue: (queue: Chapter[], currentIndex: number) => set({
+        shuffledQueue: [...queue],
+        currentQueueIndex: currentIndex,
+        isShuffleActive: true
     })
 }));

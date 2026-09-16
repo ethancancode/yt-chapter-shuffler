@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
+import '../style.css';
 import { useShufflerStore, Chapter, SavedPreset } from './shufflerStore';
 import { ShufflerPills } from './components/ShufflerPills';
 import { QueueWindow } from './components/QueueWindow';
@@ -147,17 +148,52 @@ function scrapeChapters(): Chapter[] {
     return scrapedChapters;
 }
 
+function detectIsMusicVideo(): boolean {
+    const genreMeta = document.querySelector('meta[itemprop="genre"]');
+    if (genreMeta?.getAttribute('content')?.toLowerCase() === 'music') {
+        return true;
+    }
+
+    // YouTube Content ID music attribution cards section
+    if (document.querySelector('ytd-horizontal-card-list-renderer yt-video-attribute-view-model')) {
+        return true;
+    }
+
+    const title = document.title.toLowerCase();
+    const keywords = ['full album', 'tracklist', 'soundtrack', 'ost', 'dj mix', 'setlist'];
+    if (keywords.some(kw => title.includes(kw))) {
+        return true;
+    }
+
+    return false;
+}
+
 let isNavigating = false;
+let autoShuffleHandledForVideo: string | null = null;
 
 document.addEventListener('yt-navigate-start', () => {
     isNavigating = true;
     currentLoadedVideoId = null;
+    autoShuffleHandledForVideo = null;
     useShufflerStore.getState().resetStore();
 });
 
 document.addEventListener('yt-navigate-finish', () => {
     isNavigating = false;
+    monitorTrackBoundaries();
 });
+
+// Intercept video play event as early as possible
+document.addEventListener('play', (e) => {
+    const target = e.target as HTMLElement;
+    if (target?.tagName === 'VIDEO') {
+        const store = useShufflerStore.getState();
+        const activeVid = getCurrentVideoId();
+        if (store.isAutoShuffleEnabled && !store.isShuffleActive && activeVid && autoShuffleHandledForVideo !== activeVid) {
+            monitorTrackBoundaries();
+        }
+    }
+}, true);
 
 function monitorTrackBoundaries() {
     if (isNavigating) return;
@@ -188,6 +224,28 @@ function monitorTrackBoundaries() {
                 const presets = (result[`presets_${activeVideoId}`] as SavedPreset[]) ?? [];
                 useShufflerStore.getState().setSavedPresets(presets);
             });
+
+            // check if there is an existing session queue to keep on refresh
+            let restored = false;
+            if (store.isKeepPlaylistOnRefreshEnabled) {
+                const savedSession = sessionStorage.getItem(`active_queue_${activeVideoId}`);
+                if (savedSession) {
+                    try {
+                        const parsed = JSON.parse(savedSession);
+                        if (parsed?.queue && parsed.queue.length > 0) {
+                            useShufflerStore.getState().restoreSavedSessionQueue(parsed.queue, parsed.currentIndex ?? 0);
+                            autoShuffleHandledForVideo = activeVideoId;
+                            restored = true;
+                        }
+                    } catch (e) { }
+                }
+            }
+
+            // trigger auto-shuffle if enabled for music videos and not already restored
+            if (!restored && store.isAutoShuffleEnabled && !store.isShuffleActive && detectIsMusicVideo()) {
+                autoShuffleHandledForVideo = activeVideoId;
+                useShufflerStore.getState().generateSmartQueue();
+            }
         }
     } else {
         if (currentLoadedVideoId !== activeVideoId && store.masterChaptersList.length > 0) {
@@ -248,43 +306,30 @@ function monitorTrackBoundaries() {
                     const stepTime = fadeDuration / steps;
                     const volumeStep = savedVolume / steps;
                     let currentVol = savedVolume;
-                    let currentStep = 0;
 
-                    const fadeOutInterval = setInterval(() => { // fade out current chapter
-                        currentStep++;
+                    let fadeOutInterval: number | null = null;
+                    fadeOutInterval = window.setInterval(() => {
                         currentVol = Math.max(0, currentVol - volumeStep);
                         video.volume = currentVol;
-
-                        if (currentStep >= steps) {
-                            clearInterval(fadeOutInterval);
-                            
-                            if (store.stateLoopActive) { // jump to next chapter
+                        if (currentVol <= 0.05) {
+                            if (fadeOutInterval !== null) {
+                                clearInterval(fadeOutInterval);
+                                fadeOutInterval = null;
+                            }
+                            store.setIsFadingOut(false);
+                            video.volume = 0;
+                            if (store.stateLoopActive) {
                                 video.currentTime = currentChapter.time;
-                            } else {
+                                video.volume = savedVolume;
+                            } else if (store.isShuffleActive) {
                                 store.executeTrackJump();
                             }
-
-                            let fadeInVol = 0; // fade in new chapter
-                            let fadeInStep = 0;
-                            video.volume = 0;
-
-                            const fadeInInterval = setInterval(() => {
-                                fadeInStep++;
-                                fadeInVol = Math.min(savedVolume, fadeInVol + volumeStep);
-                                video.volume = fadeInVol;
-
-                                if (fadeInStep >= steps) {
-                                    clearInterval(fadeInInterval);
-                                    video.volume = savedVolume;
-                                    store.setIsFadingOut(false);
-                                }
-                            }, stepTime);
                         }
                     }, stepTime);
                 } else {
                     if (store.stateLoopActive) {
                         video.currentTime = currentChapter.time;
-                    } else {
+                    } else if (store.isShuffleActive) {
                         store.executeTrackJump();
                     }
                 }
@@ -324,6 +369,11 @@ const layoutObserver = new MutationObserver(() => {
     if (targetSpace) {
         injectReactUI();
     }
+    const store = useShufflerStore.getState();
+    const activeVid = getCurrentVideoId();
+    if (store.isAutoShuffleEnabled && !store.isShuffleActive && activeVid && autoShuffleHandledForVideo !== activeVid) {
+        monitorTrackBoundaries();
+    }
 });
 layoutObserver.observe(document.body, { childList: true, subtree: true });
 
@@ -348,12 +398,18 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     }
 });
 
-chrome.storage.local.get(['isAudioFadeEnabled', 'fadeDuration'], (result) => {
+chrome.storage.local.get(['isAudioFadeEnabled', 'fadeDuration', 'isAutoShuffleEnabled', 'isKeepPlaylistOnRefreshEnabled'], (result) => {
     if (result.isAudioFadeEnabled !== undefined) {
         useShufflerStore.getState().setAudioFadeEnabled(result.isAudioFadeEnabled as boolean);
     }
     if (result.fadeDuration !== undefined) {
         useShufflerStore.getState().setFadeDuration(result.fadeDuration as number);
+    }
+    if (result.isAutoShuffleEnabled !== undefined) {
+        useShufflerStore.getState().setAutoShuffleEnabled(result.isAutoShuffleEnabled as boolean);
+    }
+    if (result.isKeepPlaylistOnRefreshEnabled !== undefined) {
+        useShufflerStore.getState().setKeepPlaylistOnRefreshEnabled(result.isKeepPlaylistOnRefreshEnabled as boolean);
     }
 });
 
@@ -364,6 +420,12 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
         }
         if (changes.fadeDuration) {
             useShufflerStore.getState().setFadeDuration(changes.fadeDuration.newValue as number);
+        }
+        if (changes.isAutoShuffleEnabled) {
+            useShufflerStore.getState().setAutoShuffleEnabled(changes.isAutoShuffleEnabled.newValue as boolean);
+        }
+        if (changes.isKeepPlaylistOnRefreshEnabled) {
+            useShufflerStore.getState().setKeepPlaylistOnRefreshEnabled(changes.isKeepPlaylistOnRefreshEnabled.newValue as boolean);
         }
         const activeVideoId = getCurrentVideoId();
         if (activeVideoId && changes[`presets_${activeVideoId}`]) {

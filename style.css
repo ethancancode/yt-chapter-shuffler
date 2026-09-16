@@ -1,9 +1,14 @@
-@reference "tailwindcss";
+@import "tailwindcss/theme";
 @import "tailwindcss/utilities";
 
 #yt-shuffler-panel-container {
-    transition: opacity 0.25s cubic-bezier(0.25, 0.1, 0.25, 1);
+    transition: opacity 0.25s cubic-bezier(0.25, 0.1, 0.25, 1), top 0.2s ease;
     font-family: "Roboto", "Arial", sans-serif;
+}
+
+/* In fullscreen mode, YouTube shows title/channel header at top, so shift our panel down */
+#movie_player.ytp-fullscreen #yt-shuffler-panel-container {
+    top: 65px !important;
 }
 
 #movie_player.ytp-autohide #yt-shuffler-panel-container:not([data-queue-open="true"]) {

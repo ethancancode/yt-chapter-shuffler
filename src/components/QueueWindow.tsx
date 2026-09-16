@@ -25,7 +25,7 @@ export function QueueWindow() {
     return (
         <div
             id="shuffler-video-queue-list"
-            className="flex flex-col gap-2.5 p-3 w-[320px] max-h-[325px] rounded-xl border border-[rgba(255,255,255,0.08)] bg-[rgba(21,21,21,0.95)] backdrop-blur-[16px] shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+            className="flex flex-col gap-2.5 p-3 w-[320px] max-h-[325px] rounded-xl border border-[rgba(255,255,255,0.1)] bg-[#0f0f0f] shadow-[0_8px_32px_rgba(0,0,0,0.8)]"
         >
             <div className="overflow-y-auto max-h-[220px] pr-0.5 [&::-webkit-scrollbar]:w-[4px] [&::-webkit-scrollbar-thumb]:bg-[rgba(255,255,255,0.15)] [&::-webkit-scrollbar-thumb]:rounded-[10px]" id="shuffler-tracks-anchor"> {/* scrollable list container */}
                 {shuffledQueue.map((chapter, idx) => (

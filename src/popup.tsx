@@ -5,6 +5,8 @@ import { SavedPreset, Chapter } from './shufflerStore';
 
 function PopupApp() {
     const [isAudioFadeEnabled, setIsAudioFadeEnabled] = useState(false);
+    const [isAutoShuffleEnabled, setIsAutoShuffleEnabled] = useState(false);
+    const [isKeepPlaylistOnRefreshEnabled, setIsKeepPlaylistOnRefreshEnabled] = useState(true);
     const [fadeDuration, setFadeDuration] = useState(1);
     const [videoId, setVideoId] = useState<string | null>(null);
     const [presets, setPresets] = useState<SavedPreset[]>([]);
@@ -14,12 +16,20 @@ function PopupApp() {
 
     useEffect(() => {
         // load global settings
-        chrome.storage.local.get(['isAudioFadeEnabled', 'fadeDuration'], (result) => {
+        chrome.storage.local.get(['isAudioFadeEnabled', 'fadeDuration', 'isAutoShuffleEnabled', 'isKeepPlaylistOnRefreshEnabled'], (result) => {
             if (result.isAudioFadeEnabled !== undefined) {
                 setIsAudioFadeEnabled(result.isAudioFadeEnabled as boolean);
             }
             if (result.fadeDuration !== undefined) {
                 setFadeDuration(result.fadeDuration as number);
+            }
+
+            if (result.isAutoShuffleEnabled !== undefined) {
+                setIsAutoShuffleEnabled(result.isAutoShuffleEnabled as boolean);
+            }
+
+            if (result.isKeepPlaylistOnRefreshEnabled !== undefined) {
+                setIsKeepPlaylistOnRefreshEnabled(result.isKeepPlaylistOnRefreshEnabled as boolean);
             }
         });
 
@@ -55,7 +65,7 @@ function PopupApp() {
         const updated = [...presets, newPreset];
         setPresets(updated);
         chrome.storage.local.set({ [`presets_${videoId}`]: updated });
-        
+
         // immediately enter edit mode and highlight the name
         setEditingIdx(presets.length);
         setEditingName(defaultName);
@@ -136,6 +146,51 @@ function PopupApp() {
                             <span>0.5s</span>
                             <span>5s</span>
                         </div>
+                    </div>
+                )}
+            </div>
+
+            {/* auto shuffle toggle */}
+            <div className="flex flex-col gap-2 pt-1">
+                <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                        <span className="text-sm font-medium text-white">Smart Auto-Shuffle</span>
+                        <span className="text-xs text-[#aaaaaa]">Auto-shuffles music videos on load</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={isAutoShuffleEnabled}
+                            onChange={(e) => {
+                                const val = e.target.checked;
+                                setIsAutoShuffleEnabled(val);
+                                chrome.storage.local.set({ isAutoShuffleEnabled: val });
+                            }}
+                        />
+                        <div className="w-9 h-5 bg-[#3f3f3f] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#ff4e4e]"></div>
+                    </label>
+                </div>
+
+                {isAutoShuffleEnabled && (
+                    <div className="flex items-center justify-between pl-3 pr-1 py-1.5 rounded-lg bg-[#252525] border border-[#333333]">
+                        <div className="flex flex-col">
+                            <span className="text-xs font-medium text-[#e0e0e0]">Keep Playlist on Refresh</span>
+                            <span className="text-[10px] text-[#888888]">Don't reshuffle if refreshing current video</span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={isKeepPlaylistOnRefreshEnabled}
+                                onChange={(e) => {
+                                    const val = e.target.checked;
+                                    setIsKeepPlaylistOnRefreshEnabled(val);
+                                    chrome.storage.local.set({ isKeepPlaylistOnRefreshEnabled: val });
+                                }}
+                            />
+                            <div className="w-7 h-4 bg-[#3f3f3f] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#ff4e4e]"></div>
+                        </label>
                     </div>
                 )}
             </div>
